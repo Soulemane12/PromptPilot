@@ -290,6 +290,31 @@ def draw_ui():
         altitude_label = font.render("Flight mode: manual altitude  waiting for telemetry", True, (255, 180, 0))
     screen.blit(altitude_label, (15, 370))
 
+    # --- Supervisor state badges ---
+    is_armed   = bool(supervisor_info & (1 << 1))
+    can_fly    = bool(supervisor_info & (1 << 3))
+    is_flying  = bool(supervisor_info & (1 << 4))
+    is_tumbled = bool(supervisor_info & (1 << 5))
+    is_locked  = bool(supervisor_info & (1 << 6))
+
+    if is_tumbled or is_locked:
+        badge_text  = "CRASHED / LOCKED — Press R to recover"
+        badge_color = (220, 50, 50)
+    elif is_flying:
+        badge_text  = "● FLYING"
+        badge_color = (0, 220, 80)
+    elif can_fly:
+        badge_text  = "● READY  (armed, pre-flight OK)"
+        badge_color = (0, 200, 255)
+    elif is_armed:
+        badge_text  = "● ARMED  (waiting for pre-flight)"
+        badge_color = (255, 180, 0)
+    else:
+        badge_text  = "○ DISARMED"
+        badge_color = (130, 130, 130)
+
+    screen.blit(font.render(badge_text, True, badge_color), (15, 385))
+
     ctrl_label = "PLAYSTATION CONTROLS" if is_ps else "XBOX CONTROLS"
     takeoff_btn = "Triangle         Take off" if is_ps else "Y button        Take off"
     land_btn    = "Cross (X)        Land"     if is_ps else "A button        Land"
@@ -373,6 +398,7 @@ trim_vy = 0.0
 heading_rad = 0.0
 state_z_m = 0.0
 range_z_m = None
+supervisor_info: int = 0
 
 # --- AI command state ---
 ai_steps: list = []
@@ -611,6 +637,13 @@ with connect_crazyflie(rw_cache="./cache") as scf:
     log_conf.add_variable("stateEstimate.z", "float")
     log_conf.add_variable("range.zrange", "uint16_t")
 
+    sup_conf = LogConfig(name="Supervisor", period_in_ms=100)
+    sup_conf.add_variable("supervisor.info", "uint16_t")
+
+    def supervisor_callback(_, data, __):
+        global supervisor_info
+        supervisor_info = int(data["supervisor.info"])
+
     def battery_callback(_, data, __):
         global battery_pct, battery_volt, heading_rad, state_z_m, range_z_m
         raw_voltage = data["pm.vbat"]
@@ -628,6 +661,13 @@ with connect_crazyflie(rw_cache="./cache") as scf:
     cf.log.add_config(log_conf)
     log_conf.data_received_cb.add_callback(battery_callback)
     log_conf.start()
+
+    try:
+        cf.log.add_config(sup_conf)
+        sup_conf.data_received_cb.add_callback(supervisor_callback)
+        sup_conf.start()
+    except Exception as e:
+        print(f"Supervisor log unavailable: {e}")
 
     cf.commander.send_stop_setpoint()
     time.sleep(0.2)
